@@ -9,7 +9,11 @@ import {
   writeGsapAnimationsForElement,
 } from "./gsapKeyframeCacheHelpers";
 import { toAbsoluteTime, toClipPercentage, toClipKeyframes } from "./gsapShared";
-import { deduplicateKeyframes, synthesizeFlatTweenKeyframes } from "./gsapTweenSynth";
+import {
+  deduplicateKeyframes,
+  isStaticPositionHold,
+  synthesizeFlatTweenKeyframes,
+} from "./gsapTweenSynth";
 
 function extractIdFromSelector(selector: string): string | null {
   const match = selector.match(/^#([\w-]+)/);
@@ -329,9 +333,14 @@ export function useGsapAnimationsForElement(
   // fallow-ignore-next-line complexity
   useEffect(() => {
     if (!elementId) return;
-    // No property-group filter: ungrouped tweens are recorded here as well.
+    // Same admission rule as the keyframe cache below (hold skip included) and
+    // no property-group filter: the two stores must agree, or a hold draws an
+    // expanded property lane with no collapsed diamond behind it and an
+    // ungrouped tween draws diamonds with no lane source.
     const sourceAnimations = animations.filter(
-      (animation) => animation.keyframes || synthesizeFlatTweenKeyframes(animation),
+      (animation) =>
+        !isStaticPositionHold(animation) &&
+        (animation.keyframes || synthesizeFlatTweenKeyframes(animation)),
     );
     if (sourceAnimations.length > 0)
       writeGsapAnimationsForElement(sourceFile, elementId, sourceAnimations);
@@ -357,18 +366,7 @@ export function useGsapAnimationsForElement(
     let ease: string | undefined;
     let easeEach: string | undefined;
     for (const anim of animations) {
-      // A static position hold (only x/y, no real motion) is a `set`, not a
-      // keyframe — don't synthesize a diamond for it. Covers both `tl.set(...)`
-      // and the `tl.to({ duration: 0, immediateRender: true })` hold that
-      // remove-all-keyframes collapses to (which is otherwise shown as a stray
-      // 0% keyframe).
-      if (
-        !anim.keyframes &&
-        Object.keys(anim.properties).length > 0 &&
-        Object.keys(anim.properties).every((k) => k === "x" || k === "y") &&
-        (anim.method === "set" || (anim.duration ?? 0) === 0)
-      )
-        continue;
+      if (isStaticPositionHold(anim)) continue;
       const kf = anim.keyframes ?? synthesizeFlatTweenKeyframes(anim);
       if (!kf) continue;
       // Convert tween-relative percentages to clip-relative so diamonds
@@ -469,16 +467,7 @@ export function usePopulateKeyframeCacheForFile(
       const sourceByElement = new Map<string, GsapAnimation[]>();
       for (const anim of parsed.animations) {
         if (anim.hasUnresolvedKeyframes) continue;
-        // Position-only static holds are not keyframed animations — skip them so
-        // they don't draw a timeline diamond. Covers both a `tl.set(...)` and the
-        // `tl.to({ duration: 0, immediateRender: true })` that remove-all-keyframes
-        // collapses a keyframed tween to.
-        if (!anim.keyframes && (anim.method === "set" || (anim.duration ?? 0) === 0)) {
-          const propKeys = Object.keys(anim.properties).filter((k) => k !== "immediateRender");
-          if (propKeys.length > 0 && propKeys.every((k) => k === "x" || k === "y")) {
-            continue;
-          }
-        }
+        if (isStaticPositionHold(anim)) continue;
         const kfData = anim.keyframes ?? synthesizeFlatTweenKeyframes(anim);
         if (!kfData) continue;
         // Attribute the tween to every element it animates (handles class /
