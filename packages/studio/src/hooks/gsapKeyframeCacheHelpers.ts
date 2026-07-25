@@ -114,7 +114,7 @@ export function clearKeyframeCacheForFile(sourceFile: string): void {
   }
 }
 
-function elementCacheKeys(sourceFile: string, elementId: string): string[] {
+export function elementCacheKeys(sourceFile: string, elementId: string): string[] {
   return sourceFile === "index.html"
     ? [`index.html#${elementId}`, elementId]
     : [`${sourceFile}#${elementId}`, `index.html#${elementId}`, elementId];
